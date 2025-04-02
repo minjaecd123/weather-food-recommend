@@ -9,3 +9,4 @@ streamlit-folium
 Pillow
 beautifulsoup4
 xgboost
+lightgbm
