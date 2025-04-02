@@ -17,8 +17,39 @@ import re
 
 st.set_page_config(page_title="날씨 기반 음식 추천", layout="wide")
 
-# ----------------- 기본 설정 -----------------
-st.title("🍱 날씨 기반 음식 추천")
+st.markdown("""
+    <style>
+    .food-card img {
+        width: 100% !important;
+        height: auto;
+        border-radius: 10px;
+    }
+    .food-card {
+        padding: 10px;
+        border: 1px solid #ddd;
+        border-radius: 10px;
+        box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
+        margin: 5px;
+        text-align: center;
+    }
+    details summary::marker { display: none; }
+    summary {
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 14px;
+        margin: 8px 0 4px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+st.markdown("""
+<div style='text-align: center; font-size: 32px; font-weight: bold; margin-bottom: 30px;'>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            🍱 날씨 기반 음식 추천
+</div>
+""", unsafe_allow_html=True)
+
 
 groupname_map = {
     "Noodles": "면요리", "RiceDishes": "밥/죽/덮밥", "StirFryGrill": "볶음/구이",
@@ -36,7 +67,6 @@ STATION_COORDS = {
 sky_map = {"1": "맑음", "3": "구름 많음", "4": "흐림"}
 pty_map = {"0": "없음", "1": "비", "2": "비/눈", "3": "눈", "4": "소나기"}
 
-
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
     d_lat, d_lon = map(radians, [lat2 - lat1, lon2 - lon1])
@@ -53,6 +83,7 @@ def load_material_map():
     return dict(zip(df["CKG_NM"], df["CKG_MTRL_CN"]))
 
 material_map = load_material_map()
+
 def load_food_mapping():
     df = pd.read_csv("./data/food_database.csv")
     df = df[df["CKG_GROUP"].notna()]
@@ -63,6 +94,7 @@ def load_food_mapping():
     return df.groupby("Group_Eng")["CKG_NM"].apply(list).to_dict()
 
 food_dict = load_food_mapping()
+
 with open("./data/food_description_map.pkl", "rb") as f:
     food_description_map = pickle.load(f)
 
@@ -70,7 +102,7 @@ def clean_material_text(text):
     if not text:
         return ""
     if not isinstance(text, str):
-        text = str(text)  # ✅ 문자열로 변환
+        text = str(text)
     text = re.sub(r"[▣●★※•◆▶▷→⇨→★]", "", text)
     text = re.sub(r"\([^)]*\)", "", text)
     text = re.sub(r"\[[^]]*\]", "", text)
@@ -78,10 +110,8 @@ def clean_material_text(text):
     text = re.sub(r"\s{2,}", " ", text)
     return text.strip()
 
-
-
-# ------------- 날씨 캐시 ----------------
 WEATHER_CACHE_FILE = "weather_cache.json"
+
 def load_weather_cache():
     return json.load(open(WEATHER_CACHE_FILE)) if os.path.exists(WEATHER_CACHE_FILE) else {}
 
@@ -94,8 +124,7 @@ def fetch_weather(service_key, target_date):
     is_today = target_date == today
     base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
     base_date = datetime.now().strftime('%Y%m%d')
-    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + \
-          ('getUltraSrtNcst' if is_today else 'getVilageFcst')
+    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + ('getUltraSrtNcst' if is_today else 'getVilageFcst')
     params = {
         'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
         'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
@@ -112,61 +141,37 @@ def fetch_weather(service_key, target_date):
             target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
             df = df[df['fcst_datetime'] == target_time]
             return {row['category']: float(row['fcstValue']) for _, row in df.iterrows()}
-        except: return None
+        except:
+            return None
     return None
 
-def format_description(text, preview=50):
-    return f"<details><summary>{text[:preview]}...</summary><p>{text[preview:]}</p></details>"
 
-# ---------------- UI 구성 ----------------
-left, right = st.columns([1, 2])
+# 사용자 입력 및 지도 선택
+left, right = st.columns([1, 7])
 
 with left:
     st.markdown("### 👤 사용자 정보")
-    col1 = st.columns([5, 3])
-    with col1[0]:
-        gender = st.selectbox("성별", ["남성", "여성"])
-    col2 = st.columns([5, 3])
-    with col2[0]:
-        age_group = st.selectbox("연령대", ["청소년 (10대)", "청년 (20~30대)", "중장년 (40대 이상)"])    
-    col3 = st.columns([5, 3])
-    with col3[0]:
-        selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
+    gender = st.selectbox("성별", ["남성", "여성"])
+    age_group = st.selectbox("연령대", ["청소년 (10대)", "청년 (20~30대)", "중장년 (40대 이상)"])
+    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
 
-        # 지도에서 위치 선택 (깃발 마커 추가 포함)
     st.markdown("### 🗺 지도에서 위치 선택")
-    map_center = STATION_COORDS["서울"]
+    map_center = [36.5, 127.8]
     m = folium.Map(location=map_center, zoom_start=6)
-
-    # 클릭 위치 저장 (세션 상태)
     if "map_click" not in st.session_state:
         st.session_state.map_click = None
-
-    # 마커 먼저 추가 (지도 출력 전에!)
     if st.session_state.get("map_click"):
         clicked = st.session_state["map_click"]
-        folium.Marker(
-            location=[clicked["lat"], clicked["lng"]],
-            icon=folium.Icon(color="red", icon="flag")
-        ).add_to(m)
-
-    # 지도 출력 및 클릭 좌표 받기
+        folium.Marker(location=[clicked["lat"], clicked["lng"]], icon=folium.Icon(color="red", icon="flag")).add_to(m)
     map_result = st_folium(m, height=300, width=360, returned_objects=["last_clicked"])
-
-    # 클릭 결과 저장
     if map_result.get("last_clicked"):
         st.session_state["map_click"] = map_result["last_clicked"]
-
-
-    # 도시 결정
     clicked = st.session_state.map_click
     city = find_nearest_station(clicked["lat"], clicked["lng"]) if clicked else "서울"
-    #st.markdown(f"📍 선택된 도시: **{city}**")
-
 
 
 with right:
-    if st.button("📊 음식 추천 받기"):
+    if st.button("📊 음식 추천 받기", use_container_width=True):
         cache = load_weather_cache()
         key = f"{city}_{selected_date.strftime('%Y-%m-%d')}"
         weather = cache.get(key)
@@ -183,13 +188,63 @@ with right:
         sky = sky_map.get(str(int(weather.get("SKY", 1))), "정보 없음") if weather else "정보 없음"
         pty = pty_map.get(str(int(weather.get("PTY", 0))), "정보 없음") if weather else "정보 없음"
 
-        # 날씨 요약 카드
-        st.markdown(f"### 🌤 선택 지역 날씨 ({selected_date.strftime('%Y-%m-%d')})")
-        st.markdown(f"- 기온: {temp}°C | 습도: {humidity}% | 풍속: {wind}m/s | 강수량: {rain}mm")
-        st.markdown(f"- 하늘상태: **{sky}**, 강수형태: **{pty}**")
-    
-        # 파생 피처 생성
+        # 🔹 날씨 스타일 먼저 추가
+        st.markdown("""
+        <style>
+        div[data-testid="column"] {
+            padding: 0 4px !important;  /* 좌우 여백 줄이기 */
+            margin: 0 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # 🔹 제목
+        st.markdown(f"""
+        <div style='text-align:center; margin-bottom: 10px;'>
+            <div style='font-size: 22px; font-weight: bold; color: #222;'>{selected_date.strftime('%Y-%m-%d')}</div>
+            <div style='font-size: 28px; font-weight: bold; color: #333;'>🌤 선택 지역 날씨</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <style>
+        .weather-grid {{
+            display: flex;
+            justify-content: center;
+            gap: 10px;  /* 여기서 카드 간격 조절 */
+            margin-top: 15px;
+            margin-bottom: 10px;
+        }}
+        .weather-card {{
+            flex: 1;
+            background: #f8f8f8;
+            padding: 10px 14px;
+            border-radius: 8px;
+            text-align: center;
+            box-shadow: 0px 0px 4px rgba(0,0,0,0.05);
+            font-size: 16px;
+            font-weight: bold;
+            min-width: 120px;
+        }}
+        </style>
+
+        <div class="weather-grid">
+            <div class="weather-card">🌡 기온<br>{temp:.1f}°C</div>
+            <div class="weather-card">💧 습도<br>{humidity:.0f}%</div>
+            <div class="weather-card">🌬 풍속<br>{wind:.1f} m/s</div>
+            <div class="weather-card">☔ 강수량<br>{rain:.1f} mm</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+            
+        st.markdown(f"""
+        <div style='text-align:center; margin-top: 10px; font-size: 20px; font-weight: bold;'>
+            ☁️ 하늘 상태: <b>{sky}</b> &nbsp;&nbsp; 🌧️ 강수형태: <b>{pty}</b>
+        </div>
+        """, unsafe_allow_html=True)
+
         now = datetime.combine(selected_date, datetime.min.time())
+
         input_data = pd.DataFrame([{
             "Gender": LabelEncoder().fit(["남성", "여성"]).transform([gender])[0],
             "Age_Group": LabelEncoder().fit(["청소년 (10대)", "청년 (20~30대)", "중장년 (40대 이상)"]).transform([age_group])[0],
@@ -208,15 +263,19 @@ with right:
             if file.endswith(".pkl"):
                 model = joblib.load(os.path.join(model_folder, file))
                 group = file.replace(".pkl", "")
-                try: predictions[group] = model.predict(input_data)[0]
-                except: continue
+                try:
+                    predictions[group] = model.predict(input_data)[0]
+                except:
+                    continue
 
-# [생략된 상단 코드 부분: import, 설정, 날씨 및 데이터 로딩 등 동일]
-# ...
+        # 추천 결과 출력
         top_3 = sorted(predictions.items(), key=lambda x: x[1], reverse=True)[:3]
-        st.markdown("### 🍽 추천 음식 Top 3")
-
-        cols = st.columns(len(top_3))  # 👉 수평으로 나열될 수 있도록 컬럼 생성
+        st.markdown("""
+        <div style='text-align:center; font-size: 30px; font-weight: bold; margin-top: 30px; margin-bottom: 10px;'>
+            🍽 추천 음식 Top 3
+        </div>
+        """, unsafe_allow_html=True)
+        cols = st.columns(3, gap="small")
 
         for idx, (group_eng, _) in enumerate(top_3):
             with cols[idx]:
@@ -232,51 +291,38 @@ with right:
                     soup = BeautifulSoup(res.text, 'html.parser')
                     img_tag = next((img for img in soup.find_all("img") if img.get("src", "").startswith("http")), None)
                     img_src = img_tag.get("src") if img_tag else ""
-                    img = Image.open(BytesIO(requests.get(img_src).content)).resize((180, 180)) if img_src else None
-                except: img = None
+                    img = Image.open(BytesIO(requests.get(img_src).content)).resize((200, 200)) if img_src else None
+                except:
+                    img = None
 
-                #st.markdown(f"#### 🍲 {group_kor}") 음식군 제거 
-                if img: st.image(img, width=180)
-                st.markdown(f"**{food}**")
-                # 재료 클렌징
-                materials = material_map.get(food, "재료 정보가 없습니다.")
-                cleaned_materials = clean_material_text(materials)
+                img_src = ""
+                if img_tag and img_tag.get("src", "").startswith("http"):
+                    img_src = img_tag.get("src")
 
-                # 설명 (예시 텍스트 or food_desc_map.get(food, "설명 없음") 등으로 연결 가능)
-                description_text = f"{food}는 계절과 날씨에 어울리는 음식으로 영양도 풍부하고 맛도 좋아요!"
+                materials = clean_material_text(material_map.get(food, "재료 정보가 없습니다."))
+                description_text = food_description_map.get(food, f"{food}는 계절과 날씨에 어울리는 음식이에요.")
 
-                # UI 구성
-                st.markdown(
-                    f"""
-                    <style>
-                    details summary::marker {{ display: none; }}
-                    details[open].desc summary span::after {{ content: "📖 음식 설명 닫기 ▲"; }}
-                    details:not([open]).desc summary span::after {{ content: "📖 음식 설명 보기 ▼"; }}
+                card_html = f"""
+                <div class='food-card' style="min-height: 320px; display: flex; flex-direction: column; justify-content: space-between;">
+                    {'<img src="' + img_src + '" style="width:100%; border-radius:10px; height:200px; object-fit:cover; margin-bottom: 8px;" />' if img_src else ''}
+                    <p style="margin-top: 0; margin-bottom: 12px; font-size: 16px; text-align: center;"><strong>{food}</strong></p>
+                    <div style="margin-top:auto; text-align: center;">
+                        <details class="mat">
+                            <summary>📦 재료 보기 ▼</summary>
+                            <p>{materials}</p>
+                        </details>
+                        <details class="desc">
+                            <summary>📖 음식 설명 보기 ▼</summary>
+                            <p>{description_text}</p>
+                        </details>
+                    </div>
+                </div>
+                """
+                st.markdown(card_html, unsafe_allow_html=True)
+                materials = clean_material_text(material_map.get(food, "재료 정보가 없습니다."))
+                description_text = food_description_map.get(food, f"{food}는 계절과 날씨에 어울리는 음식이에요.")
 
-                    details[open].mat summary span::after {{ content: "📦 재료 닫기 ▲"; }}
-                    details:not([open]).mat summary span::after {{ content: "📦 재료 보기 ▼"; }}
-
-                    summary {{
-                        cursor: pointer;
-                        font-weight: bold;
-                        font-size: 14px;
-                        margin-bottom: 5px;
-                    }}
-                    </style>
-
-                    <details class="mat">
-                        <summary><span></span></summary>
-                        <p>{cleaned_materials}</p>
-                    </details>
-
-                    <details class="desc">
-                        <summary><span></span></summary>
-                        <p>{description_text}</p>
-                    </details>
-                    """,
-                    unsafe_allow_html=True
-                )
-
+                st.markdown(f'''''', unsafe_allow_html=True)
         # ✅ 네이버 오픈 API 로고 + 출처 푸터 (중첩 없이)
         st.markdown("""
         <hr style="margin-top: 2em;">
@@ -300,9 +346,4 @@ with right:
         모델은 Scikit-learn 기반 LGBMClassifier를 사용하였으며, 이미지는 Google 이미지 검색을 통해 참조합니다.<br>
         © 2024 My Weather Food Recommender
         </div>
-        """, unsafe_allow_html=True)
-
-
-
-
-
+        """, unsafe_allow_html=True)                
