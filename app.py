@@ -120,7 +120,8 @@ def clean_material_text(text):
 WEATHER_CACHE_FILE = "weather_cache.json"
 
 def load_weather_cache():
-    return json.load(open(WEATHER_CACHE_FILE)) if os.path.exists(WEATHER_CACHE_FILE) else {}
+    return json.load(open(WEATHER_CACHE_FILE, encoding='utf-8')) if os.path.exists(WEATHER_CACHE_FILE) else {}
+
 
 def save_weather_cache(data):
     with open(WEATHER_CACHE_FILE, "w") as f:
@@ -290,12 +291,12 @@ with right:
         </style>
 
         <div class="weather-grid">
-            <div class="weather-card">🌡 기온<br>{temp:.1f}°C</div>
-            <div class="weather-card">💧 습도<br>{humidity:.0f}%</div>
-            <div class="weather-card">🌬 풍속<br>{wind:.1f} m/s</div>
+            <div class="weather-card">🌡 기온<br>{temp}°C</div>
+            <div class="weather-card">💧 습도<br>{humidity}%</div>
+            <div class="weather-card">🌬 풍속<br>{wind} m/s</div>
         </div>
         <div class="weather-grid">
-            <div class="weather-card">☔ 강수량<br>{rain:.1f} mm</div>
+            <div class="weather-card">☔ 강수량<br>{rain} mm</div>
             <div class="weather-card">☁️ 하늘상태<br>{sky}</div>
             <div class="weather-card">🌧️ 강수형태<br>{pty}</div>
         </div>
