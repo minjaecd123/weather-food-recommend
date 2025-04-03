@@ -255,7 +255,7 @@ with left:
     st.markdown("### 👤 입력 정보")
     gender = st.selectbox("성별", ["남성", "여성"])
     age_group = st.selectbox("연령대", ["청년층", "중년층", "장년층"])
-    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=4))
+    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
 
     st.markdown("### 🗺  위치 선택")
     
