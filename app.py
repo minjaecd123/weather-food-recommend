@@ -209,7 +209,6 @@ with right:
         st.markdown(f"""
         <div style='text-align:center; margin-bottom: 10px;'>
             <div style='text-align:center; font-size: 30px; font-weight: bold; '>{selected_date.strftime('%Y-%m-%d')}</div>
-            <div style='text-align:center; font-size: 30px; font-weight: bold; '>🌤 선택 지역 날씨</div>
         </div>
         """, unsafe_allow_html=True)
         # 🔹 기온 습도 풍속 강수량 
