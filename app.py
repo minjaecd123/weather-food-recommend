@@ -14,8 +14,15 @@ import folium
 from streamlit_folium import st_folium
 from math import radians, cos, sin, asin, sqrt
 import re
-
+import time
 st.set_page_config(page_title="날씨 기반 음식 추천", layout="wide")
+
+#다크모드일때 
+is_dark = st.get_option("theme.base") == "dark"
+text_color = "#fff" if is_dark else "#000"
+bg_color = "#333" if is_dark else "#f8f8f8"
+accent_color = "#4dabf7" if is_dark else "#1f77b4"
+
 
 st.markdown("""
     <style>
@@ -150,12 +157,12 @@ def fetch_weather(service_key, target_date):
 left, right = st.columns([1, 7])
 
 with left:
-    st.markdown("### 👤 사용자 정보")
+    st.markdown("### 👤 입력 정보")
     gender = st.selectbox("성별", ["남성", "여성"])
-    age_group = st.selectbox("연령대", ["청소년 (10대)", "청년 (20~30대)", "중장년 (40대 이상)"])
+    age_group = st.selectbox("연령대", ["청년층", "중년층", "장년층"])
     selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
 
-    st.markdown("### 🗺 지도에서 위치 선택")
+    st.markdown("### 🗺  위치 선택")
     map_center = [36.5, 127.8]
     m = folium.Map(location=map_center, zoom_start=6)
     if "map_click" not in st.session_state:
@@ -201,11 +208,11 @@ with right:
         # 🔹 제목
         st.markdown(f"""
         <div style='text-align:center; margin-bottom: 10px;'>
-            <div style='font-size: 22px; font-weight: bold; color: #222;'>{selected_date.strftime('%Y-%m-%d')}</div>
-            <div style='font-size: 28px; font-weight: bold; color: #333;'>🌤 선택 지역 날씨</div>
+            <div style='text-align:center; font-size: 30px; font-weight: bold; '>{selected_date.strftime('%Y-%m-%d')}</div>
+            <div style='text-align:center; font-size: 30px; font-weight: bold; '>🌤 선택 지역 날씨</div>
         </div>
         """, unsafe_allow_html=True)
-
+        # 🔹 기온 습도 풍속 강수량 
         st.markdown(f"""
         <style>
         .weather-grid {{
@@ -217,6 +224,8 @@ with right:
         }}
         .weather-card {{
             flex: 1;
+            background: {bg_color}; 
+            color: {text_color};        
             background: #f8f8f8;
             padding: 10px 14px;
             border-radius: 8px;
@@ -236,7 +245,7 @@ with right:
         </div>
         """, unsafe_allow_html=True)
 
-            
+        # 🔹 하늘상태 강수형태 
         st.markdown(f"""
         <div style='text-align:center; margin-top: 10px; font-size: 20px; font-weight: bold;'>
             ☁️ 하늘 상태: <b>{sky}</b> &nbsp;&nbsp; 🌧️ 강수형태: <b>{pty}</b>
@@ -247,7 +256,7 @@ with right:
 
         input_data = pd.DataFrame([{
             "Gender": LabelEncoder().fit(["남성", "여성"]).transform([gender])[0],
-            "Age_Group": LabelEncoder().fit(["청소년 (10대)", "청년 (20~30대)", "중장년 (40대 이상)"]).transform([age_group])[0],
+            "Age_Group": LabelEncoder().fit(["청년층", "중년층", "장년층"]).transform([age_group])[0],
             "Region": LabelEncoder().fit(list(STATION_COORDS.keys())).transform([city])[0],
             "TA_AVG": temp, "HM_AVG": humidity, "WS_AVG": wind, "RN_DAY": rain,
             "Month_sin": np.sin(2 * np.pi * now.month / 12),
@@ -323,6 +332,12 @@ with right:
                 description_text = food_description_map.get(food, f"{food}는 계절과 날씨에 어울리는 음식이에요.")
 
                 st.markdown(f'''''', unsafe_allow_html=True)
+                #----------------
+                #축하 애니매이션
+                #st.success("추천완료")
+                #st.balloons() 
+                #---------------- 
+
         # ✅ 네이버 오픈 API 로고 + 출처 푸터 (중첩 없이)
         st.markdown("""
         <hr style="margin-top: 2em;">
