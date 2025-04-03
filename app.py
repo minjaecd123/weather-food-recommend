@@ -126,8 +126,53 @@ def save_weather_cache(data):
     with open(WEATHER_CACHE_FILE, "w") as f:
         json.dump(data, f)
 
-def fetch_weather(service_key, target_date):
+
+def fetch_weather(service_key, target_date, city="서울"):
+    nx, ny = STATION_COORDS[city]
     today = datetime.today().date()
+    is_today = target_date == today
+    base_date = target_date.strftime('%Y%m%d')
+    base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
+    cache_key = f"{city}_{target_date.strftime('%Y-%m-%d')}"
+    cache = load_weather_cache()
+    if cache_key in cache:
+        return cache[cache_key]
+
+    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + (
+        'getUltraSrtNcst' if is_today else 'getVilageFcst'
+    )
+    params = {
+        'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
+        'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
+        'nx': nx, 'ny': ny
+    }
+
+    res = requests.get(url, params=params)
+    if res.status_code == 200:
+        try:
+            items = res.json()['response']['body']['items']['item']
+            if is_today:
+                result = {i['category']: float(i['obsrValue']) for i in items if 'obsrValue' in i}
+            else:
+                df = pd.DataFrame(items)
+                df['fcst_datetime'] = pd.to_datetime(df['fcstDate'] + df['fcstTime'], format='%Y%m%d%H%M')
+                target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
+                available_times = df["fcst_datetime"].unique()
+                nearest_time = min(available_times, key=lambda x: abs(x - target_time))
+                for t in sorted(available_times, key=lambda x: abs(x - target_time)):
+                    sub = df[df["fcst_datetime"] == t]
+                    if "SKY" in sub["category"].values and "PTY" in sub["category"].values:
+                        nearest_time = t
+                        break
+                sub = df[df["fcst_datetime"] == nearest_time]
+                result = {row["category"]: float(row["fcstValue"]) for _, row in sub.iterrows()}
+            cache[cache_key] = result
+            save_weather_cache(cache)
+            return result
+        except:
+            return None
+    return None
+    return None
     is_today = target_date == today
     base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
     base_date = datetime.now().strftime('%Y%m%d')
@@ -160,11 +205,25 @@ with left:
     st.markdown("### 👤 입력 정보")
     gender = st.selectbox("성별", ["남성", "여성"])
     age_group = st.selectbox("연령대", ["청년층", "중년층", "장년층"])
-    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
+    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=4))
 
     st.markdown("### 🗺  위치 선택")
-    map_center = [36.5, 127.8]
-    m = folium.Map(location=map_center, zoom_start=6)
+    
+    # 남한 + 제주도만 보이는 고정 지도 (조작 완전 차단)
+    map_center = [35.5, 127.8]
+    m = folium.Map(
+        location=map_center,
+        zoom_start=4,
+        dragging=False,            # 이동 금지
+        scrollWheelZoom=False,     # 마우스 휠 줌 금지
+        zoom_control=False,        # +, - 버튼 제거
+        control_scale=False,       # 축척 제거
+        min_zoom=6, max_zoom=6     # 줌 딱 7로 고정
+    )
+    m.fit_bounds([[33.0, 125.5], [38.5, 132.5]])
+
+
+
     if "map_click" not in st.session_state:
         st.session_state.map_click = None
     if st.session_state.get("map_click"):
@@ -205,12 +264,6 @@ with right:
         </style>
         """, unsafe_allow_html=True)
 
-        # 🔹 제목
-        st.markdown(f"""
-        <div style='text-align:center; margin-bottom: 10px;'>
-            <div style='text-align:center; font-size: 30px; font-weight: bold; '>{selected_date.strftime('%Y-%m-%d')}</div>
-        </div>
-        """, unsafe_allow_html=True)
         # 🔹 기온 습도 풍속 강수량 
         st.markdown(f"""
         <style>
@@ -240,16 +293,14 @@ with right:
             <div class="weather-card">🌡 기온<br>{temp:.1f}°C</div>
             <div class="weather-card">💧 습도<br>{humidity:.0f}%</div>
             <div class="weather-card">🌬 풍속<br>{wind:.1f} m/s</div>
+        </div>
+        <div class="weather-grid">
             <div class="weather-card">☔ 강수량<br>{rain:.1f} mm</div>
+            <div class="weather-card">☁️ 하늘상태<br>{sky}</div>
+            <div class="weather-card">🌧️ 강수형태<br>{pty}</div>
         </div>
         """, unsafe_allow_html=True)
-
-        # 🔹 하늘상태 강수형태 
-        st.markdown(f"""
-        <div style='text-align:center; margin-top: 10px; font-size: 20px; font-weight: bold;'>
-            ☁️ 하늘 상태: <b>{sky}</b> &nbsp;&nbsp; 🌧️ 강수형태: <b>{pty}</b>
-        </div>
-        """, unsafe_allow_html=True)
+        
 
         now = datetime.combine(selected_date, datetime.min.time())
 
@@ -278,11 +329,13 @@ with right:
 
         # 추천 결과 출력
         top_3 = sorted(predictions.items(), key=lambda x: x[1], reverse=True)[:3]
-        st.markdown("""
-        <div style='text-align:center; font-size: 30px; font-weight: bold; margin-top: 30px; margin-bottom: 10px;'>
-            🍽 추천 음식 Top 3
+        # 🔹 제목
+        st.markdown(f"""
+        <div style='text-align:center; font-size: 30px; font-weight: bold; margin: 20px 0;'>
+            {selected_date.strftime('%Y-%m-%d')} 추천 음식 Top 3
         </div>
         """, unsafe_allow_html=True)
+
         cols = st.columns(3, gap="small")
 
         for idx, (group_eng, _) in enumerate(top_3):
@@ -360,4 +413,4 @@ with right:
         모델은 Scikit-learn 기반 LGBMClassifier를 사용하였으며, 이미지는 Google 이미지 검색을 통해 참조합니다.<br>
         © 2024 My Weather Food Recommender
         </div>
-        """, unsafe_allow_html=True)                
+        """, unsafe_allow_html=True) 
