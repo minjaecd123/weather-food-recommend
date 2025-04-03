@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 import requests
 import os, json, pickle
-from weather_fetcher import run_weather_fetcher
 from datetime import datetime, timedelta, date
 from sklearn.preprocessing import LabelEncoder
 from urllib.parse import quote
@@ -17,8 +16,6 @@ from math import radians, cos, sin, asin, sqrt
 import re
 import time
 st.set_page_config(page_title="날씨 기반 음식 추천", layout="wide")
-
-run_weather_fetcher("KMA_API_KEY")
 
 #다크모드일때 
 is_dark = st.get_option("theme.base") == "dark"
@@ -123,8 +120,7 @@ def clean_material_text(text):
 WEATHER_CACHE_FILE = "weather_cache.json"
 
 def load_weather_cache():
-    return json.load(open(WEATHER_CACHE_FILE, encoding="utf-8")) if os.path.exists(WEATHER_CACHE_FILE) else {}
-
+    return json.load(open(WEATHER_CACHE_FILE)) if os.path.exists(WEATHER_CACHE_FILE) else {}
 
 def save_weather_cache(data):
     with open(WEATHER_CACHE_FILE, "w") as f:
@@ -132,12 +128,12 @@ def save_weather_cache(data):
 
 
 def fetch_weather(service_key, target_date, city="서울"):
+    nx, ny = STATION_COORDS[city]
     today = datetime.today().date()
     is_today = target_date == today
     base_date = target_date.strftime('%Y%m%d')
     base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
     cache_key = f"{city}_{target_date.strftime('%Y-%m-%d')}"
-
     cache = load_weather_cache()
     if cache_key in cache:
         return cache[cache_key]
@@ -145,20 +141,9 @@ def fetch_weather(service_key, target_date, city="서울"):
     url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + (
         'getUltraSrtNcst' if is_today else 'getVilageFcst'
     )
-
-    nx, ny = {
-        "서울": (60, 127), "수원": (60, 120), "강릉": (92, 131),
-        "청주": (69, 106), "대전": (67, 100), "광주": (58, 74),
-        "대구": (89, 90), "부산": (98, 76), "제주": (52, 38)
-    }.get(city, (60, 127))
-
     params = {
-        'serviceKey': service_key,
-        'pageNo': '1',
-        'numOfRows': '1000',
-        'dataType': 'JSON',
-        'base_date': base_date,
-        'base_time': base_time,
+        'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
+        'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
         'nx': nx, 'ny': ny
     }
 
@@ -172,7 +157,13 @@ def fetch_weather(service_key, target_date, city="서울"):
                 df = pd.DataFrame(items)
                 df['fcst_datetime'] = pd.to_datetime(df['fcstDate'] + df['fcstTime'], format='%Y%m%d%H%M')
                 target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
-                nearest_time = min(df["fcst_datetime"].unique(), key=lambda x: abs(x - target_time))
+                available_times = df["fcst_datetime"].unique()
+                nearest_time = min(available_times, key=lambda x: abs(x - target_time))
+                for t in sorted(available_times, key=lambda x: abs(x - target_time)):
+                    sub = df[df["fcst_datetime"] == t]
+                    if "SKY" in sub["category"].values and "PTY" in sub["category"].values:
+                        nearest_time = t
+                        break
                 sub = df[df["fcst_datetime"] == nearest_time]
                 result = {row["category"]: float(row["fcstValue"]) for _, row in sub.iterrows()}
             cache[cache_key] = result
@@ -181,6 +172,31 @@ def fetch_weather(service_key, target_date, city="서울"):
         except:
             return None
     return None
+    return None
+    is_today = target_date == today
+    base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
+    base_date = datetime.now().strftime('%Y%m%d')
+    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + ('getUltraSrtNcst' if is_today else 'getVilageFcst')
+    params = {
+        'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
+        'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
+        'nx': 60, 'ny': 127
+    }
+    res = requests.get(url, params=params)
+    if res.status_code == 200:
+        try:
+            items = res.json()['response']['body']['items']['item']
+            if is_today:
+                return {i['category']: float(i['obsrValue']) for i in items if 'obsrValue' in i}
+            df = pd.DataFrame(items)
+            df['fcst_datetime'] = pd.to_datetime(df['fcstDate'] + df['fcstTime'], format='%Y%m%d%H%M')
+            target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
+            df = df[df['fcst_datetime'] == target_time]
+            return {row['category']: float(row['fcstValue']) for _, row in df.iterrows()}
+        except:
+            return None
+    return None
+
 
 # 사용자 입력 및 지도 선택
 left, right = st.columns([1, 7])
@@ -189,7 +205,7 @@ with left:
     st.markdown("### 👤 입력 정보")
     gender = st.selectbox("성별", ["남성", "여성"])
     age_group = st.selectbox("연령대", ["청년층", "중년층", "장년층"])
-    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=3))
+    selected_date = st.date_input("날짜 선택", value=date.today(), min_value=date.today(), max_value=date.today()+timedelta(days=4))
 
     st.markdown("### 🗺  위치 선택")
     
@@ -274,12 +290,12 @@ with right:
         </style>
 
         <div class="weather-grid">
-            <div class="weather-card">🌡 기온<br>{temp}°C</div>
-            <div class="weather-card">💧 습도<br>{humidity}%</div>
-            <div class="weather-card">🌬 풍속<br>{wind} m/s</div>
+            <div class="weather-card">🌡 기온<br>{temp:.1f}°C</div>
+            <div class="weather-card">💧 습도<br>{humidity:.0f}%</div>
+            <div class="weather-card">🌬 풍속<br>{wind:.1f} m/s</div>
         </div>
         <div class="weather-grid">
-            <div class="weather-card">☔ 강수량<br>{rain} mm</div>
+            <div class="weather-card">☔ 강수량<br>{rain:.1f} mm</div>
             <div class="weather-card">☁️ 하늘상태<br>{sky}</div>
             <div class="weather-card">🌧️ 강수형태<br>{pty}</div>
         </div>
@@ -397,4 +413,4 @@ with right:
         모델은 Scikit-learn 기반 LGBMClassifier를 사용하였으며, 이미지는 Google 이미지 검색을 통해 참조합니다.<br>
         © 2024 My Weather Food Recommender
         </div>
-        """, unsafe_allow_html=True)  
+        """, unsafe_allow_html=True) 
