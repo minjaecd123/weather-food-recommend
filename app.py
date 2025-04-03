@@ -15,6 +15,8 @@ from streamlit_folium import st_folium
 from math import radians, cos, sin, asin, sqrt
 import re
 import time
+import urllib.parse
+
 st.set_page_config(page_title="날씨 기반 음식 추천", layout="wide")
 
 #다크모드일때 
@@ -22,6 +24,104 @@ is_dark = st.get_option("theme.base") == "dark"
 text_color = "#fff" if is_dark else "#000"
 bg_color = "#333" if is_dark else "#f8f8f8"
 accent_color = "#4dabf7" if is_dark else "#1f77b4"
+
+#기상청 데이터 수집후 캐쉬파일로 저장 ================================
+
+# 지역별 격자 좌표
+STATION_COORDS = {
+    "서울": (60, 127), "수원": (60, 121), "강릉": (92, 131), "청주": (69, 106),
+    "대전": (67, 100), "광주": (58, 74), "대구": (89, 90), "부산": (98, 76), "제주": (52, 38)
+}
+
+API_KEY = st.secrets["KMA_API_KEY"]  # ← 반드시 본인 API 키로 교체
+BASE_TIME = "0500"
+TARGET_CATEGORIES = ['TMP', 'REH', 'WSD', 'RN1', 'SKY', 'PTY']
+TARGET_HOUR = "1200"
+OUTPUT_FILE = "weather_cache.json"
+
+# ✅ 기존 파일 불러오기
+def load_existing_data():
+    if os.path.exists(OUTPUT_FILE):
+        with open(OUTPUT_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {}
+
+# ✅ 12:00 예보 수집 함수
+def fetch_12pm_forecast(region, nx, ny, target_date):
+    base_date = datetime.now().strftime("%Y%m%d")
+    target_dt = datetime.combine(target_date, datetime.strptime(TARGET_HOUR, "%H%M").time())
+
+    url = "http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst"
+    params = {
+        "serviceKey": API_KEY,
+        "pageNo": "1",
+        "numOfRows": "1000",
+        "dataType": "JSON",
+        "base_date": base_date,
+        "base_time": BASE_TIME,
+        "nx": nx,
+        "ny": ny,
+    }
+
+    try:
+        res = requests.get(url, params=params)
+        res.raise_for_status()
+        items = res.json()["response"]["body"]["items"]["item"]
+        df = pd.DataFrame(items)
+        df = df[df["category"].isin(TARGET_CATEGORIES)]
+        df["fcst_datetime"] = pd.to_datetime(df["fcstDate"] + df["fcstTime"], format="%Y%m%d%H%M")
+
+        df_target = df[df["fcst_datetime"] == target_dt]
+        if df_target.empty:
+            print(f"[{region}] ❌ {target_date.strftime('%Y-%m-%d')} 12:00 예보 없음")
+            return None, None
+
+        values = df_target.set_index("category")["fcstValue"].astype(float).to_dict()
+        key = f"{region}_{target_date.strftime('%Y-%m-%d')}"
+        return key, values
+
+    except Exception as e:
+        print(f"[{region}] ❗ 오류 발생: {e}")
+        return None, None
+
+# ✅ 수집 함수 (JSON과 날짜 비교 먼저!)
+def collect_if_needed():
+    existing_data = load_existing_data()
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    # 오늘 날짜가 포함된 지역 키가 모두 존재하는지 확인
+    expected_keys = [
+        f"{region}_{(datetime.now().date() + timedelta(days=offset)).strftime('%Y-%m-%d')}"
+        for region in STATION_COORDS
+        for offset in range(4)
+    ]
+    if all(key in existing_data for key in expected_keys):
+        print("✅ 오늘 날짜 및 예보 3일치 모두 이미 수집됨 → 패스")
+        return existing_data
+
+    print("🚀 데이터 최초 수집 실행 중...")
+    updated_data = existing_data.copy()
+    newly_collected = 0
+
+    for region, (nx, ny) in STATION_COORDS.items():
+        for offset in range(4):  # 오늘 + 3일
+            target_date = datetime.now().date() + timedelta(days=offset)
+            key = f"{region}_{target_date.strftime('%Y-%m-%d')}"
+
+            if key in updated_data:
+                continue  # 혹시라도 중복 있을 때도 대비
+
+            key, value = fetch_12pm_forecast(region, nx, ny, target_date)
+            if key and value:
+                updated_data[key] = value
+                newly_collected += 1
+            time.sleep(0.2)
+
+    print(f"✅ 수집 완료: {newly_collected}건 추가됨")
+    return updated_data
+
+
+#기상청 데이터 수집후 캐쉬파일로 저장 ================================
 
 
 st.markdown("""
@@ -74,6 +174,8 @@ STATION_COORDS = {
 sky_map = {"1": "맑음", "3": "구름 많음", "4": "흐림"}
 pty_map = {"0": "없음", "1": "비", "2": "비/눈", "3": "눈", "4": "소나기"}
 
+
+
 def haversine(lat1, lon1, lat2, lon2):
     R = 6371
     d_lat, d_lon = map(radians, [lat2 - lat1, lon2 - lon1])
@@ -119,84 +221,31 @@ def clean_material_text(text):
 
 WEATHER_CACHE_FILE = "weather_cache.json"
 
-def load_weather_cache():
-    return json.load(open(WEATHER_CACHE_FILE, encoding='utf-8')) if os.path.exists(WEATHER_CACHE_FILE) else {}
 
 
 def save_weather_cache(data):
-    with open(WEATHER_CACHE_FILE, "w") as f:
-        json.dump(data, f)
+    with open(WEATHER_CACHE_FILE, "w", encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+def get_valid_base_time():
+    now = datetime.now()
+    hour = now.hour
+    # 기상청 기준 예보 시간: 02, 05, 08, 11, 14, 17, 20, 23
+    valid_hours = [23, 20, 17, 14, 11, 8, 5, 2]
+    for h in valid_hours:
+        if hour >= h:
+            return f"{h:02}00"
+    return "2300"
 
 
 def fetch_weather(service_key, target_date, city="서울"):
-    nx, ny = STATION_COORDS[city]
-    today = datetime.today().date()
-    is_today = target_date == today
-    base_date = target_date.strftime('%Y%m%d')
-    base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
+    WEATHER_CACHE_FILE = "weather_cache.json"
+
+    nx, ny = STATION_COORDS.get(city, (60, 127))
     cache_key = f"{city}_{target_date.strftime('%Y-%m-%d')}"
-    cache = load_weather_cache()
+    cache = load_existing_data()
+
     if cache_key in cache:
         return cache[cache_key]
-
-    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + (
-        'getUltraSrtNcst' if is_today else 'getVilageFcst'
-    )
-    params = {
-        'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
-        'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
-        'nx': nx, 'ny': ny
-    }
-
-    res = requests.get(url, params=params)
-    if res.status_code == 200:
-        try:
-            items = res.json()['response']['body']['items']['item']
-            if is_today:
-                result = {i['category']: float(i['obsrValue']) for i in items if 'obsrValue' in i}
-            else:
-                df = pd.DataFrame(items)
-                df['fcst_datetime'] = pd.to_datetime(df['fcstDate'] + df['fcstTime'], format='%Y%m%d%H%M')
-                target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
-                available_times = df["fcst_datetime"].unique()
-                nearest_time = min(available_times, key=lambda x: abs(x - target_time))
-                for t in sorted(available_times, key=lambda x: abs(x - target_time)):
-                    sub = df[df["fcst_datetime"] == t]
-                    if "SKY" in sub["category"].values and "PTY" in sub["category"].values:
-                        nearest_time = t
-                        break
-                sub = df[df["fcst_datetime"] == nearest_time]
-                result = {row["category"]: float(row["fcstValue"]) for _, row in sub.iterrows()}
-            cache[cache_key] = result
-            save_weather_cache(cache)
-            return result
-        except:
-            return None
-    return None
-    return None
-    is_today = target_date == today
-    base_time = (datetime.now() - timedelta(minutes=40)).strftime('%H00') if is_today else "0500"
-    base_date = datetime.now().strftime('%Y%m%d')
-    url = 'http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/' + ('getUltraSrtNcst' if is_today else 'getVilageFcst')
-    params = {
-        'serviceKey': service_key, 'pageNo': '1', 'numOfRows': '1000',
-        'dataType': 'JSON', 'base_date': base_date, 'base_time': base_time,
-        'nx': 60, 'ny': 127
-    }
-    res = requests.get(url, params=params)
-    if res.status_code == 200:
-        try:
-            items = res.json()['response']['body']['items']['item']
-            if is_today:
-                return {i['category']: float(i['obsrValue']) for i in items if 'obsrValue' in i}
-            df = pd.DataFrame(items)
-            df['fcst_datetime'] = pd.to_datetime(df['fcstDate'] + df['fcstTime'], format='%Y%m%d%H%M')
-            target_time = datetime.combine(target_date, datetime.strptime("1500", "%H%M").time())
-            df = df[df['fcst_datetime'] == target_time]
-            return {row['category']: float(row['fcstValue']) for _, row in df.iterrows()}
-        except:
-            return None
-    return None
 
 
 # 사용자 입력 및 지도 선택
@@ -239,7 +288,8 @@ with left:
 
 with right:
     if st.button("📊 음식 추천 받기", use_container_width=True):
-        cache = load_weather_cache()
+        collect_if_needed()(st.secrets["KMA_API_KEY"])
+        cache = load_existing_data()
         key = f"{city}_{selected_date.strftime('%Y-%m-%d')}"
         weather = cache.get(key)
         if not weather:
