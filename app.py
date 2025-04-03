@@ -288,8 +288,7 @@ with left:
 
 with right:
     if st.button("📊 음식 추천 받기", use_container_width=True):
-        collect_if_needed()(st.secrets["KMA_API_KEY"])
-        cache = load_existing_data()
+        cache = collect_if_needed()
         key = f"{city}_{selected_date.strftime('%Y-%m-%d')}"
         weather = cache.get(key)
         if not weather:
